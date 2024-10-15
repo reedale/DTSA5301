@@ -1,0 +1,134 @@
+---
+title: "NYPD_Data"
+output: pdf_document
+date: "2024-10-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## NYPD Historical Shooting Data Project 
+
+For this project, I chose to analyze NYPD historic shooting data to understand more about how reported shootings and murders have changed over time in each of NYC's boroughs. The dataset includes data from 2006 - 2023. I chose to primarily look at data in what I would consider "public" places, so I have excluded data from unknown or unrecorded locations, as well as private residences. 
+
+## Bias Identification
+
+It is important to note for this project that there may be sources of bias both in the data collection and aggregation, and in my analysis itself. 
+
+1. The data included only includes reported incidents. One can assume the actual numbers are higher than the NYPD database would reflect. 
+
+2. I have personally excluded data that occurs at a private residence in order to examine the likelihood of the average person being shot or murdered in each of the boroughs over time. I was interested in examining if NYC has gotten more or less dangerous over time, but I have excluded the private location data under the assumption that these shootings are between parties that know eachother, rather than a random act of violence. This is again, an assumption that reflects my personal bias. 
+
+## Setting Up 
+Some graphics in this R Markdown document require XQuartz for MacOS to run properly. 
+
+```{r get_data,  warning = FALSE, message = FALSE, results = 'hide'}
+# Set Up Environment
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(mgcv)
+library(ggplot2)
+
+# Read the CSV data from the URL 
+nyc_data <- read.csv('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD') 
+
+```
+
+
+```{r clean_data,  warning = FALSE, message = FALSE, results = 'hide'}
+
+# Remove columns 1, 5-8, and 17-21 
+data_reduced <- nyc_data %>% select(-c(1, 5:8, 17:21))
+
+# Cleaning up empty or null entries 
+data_reduced <- data_reduced %>% mutate(across(everything(), ~replace_na(.x, 'UNKNOWN'))) %>% mutate(across(everything(), ~ifelse(.x == '', 'UNKNOWN', .x))) 
+data_reduced <- data_reduced %>% mutate(across(everything(), ~ifelse(. == "(null)", "UNKNOWN", .)))
+
+# Condensing Entries for Location to Public, Private or Unknown
+locations = unique(data_reduced$LOCATION_DESC)
+private <- c('MULTI DWELL - APT BUILD','PVT HOUSE')
+unknown <- c('NONE','UNKNOWN')
+tmp = setdiff(locations, private)
+public = setdiff(tmp, unknown)
+
+data_reduced$LOCATION_DESC <- ifelse(data_reduced$LOCATION_DESC %in% public, 'PUBLIC', data_reduced$LOCATION_DESC)
+data_reduced$LOCATION_DESC <- ifelse(data_reduced$LOCATION_DESC %in% private, 'PRIVATE', data_reduced$LOCATION_DESC)
+data_reduced$LOCATION_DESC <- ifelse(data_reduced$LOCATION_DESC %in% unknown, 'UNKNOWN', data_reduced$LOCATION_DESC)
+```
+
+```{r organize_data,  warning = FALSE, message = FALSE}
+
+#Original Location Data
+view(locations)
+#Condensed Location Data
+new_locations = unique(data_reduced$LOCATION_DESC)
+view(new_locations)
+```
+
+##Visualizing Public Shootings by Borough
+The below plots investigate the number of shootings in each borough, and then examine a subset of those shootings that were classified as murders. I chose to examine only the shootings and murders that occurred in public places, which was included in the dataset as the location description. 
+
+```{r plots,  warning = FALSE, message = FALSE}
+#Questions to Answer
+# 1. Let's examine public shootings only, by borough over time 
+data_reduced <- data_reduced %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+boro_monthly_data <- data_reduced %>% mutate(year_month = floor_date(OCCUR_DATE, "month")) %>% group_by(BORO, LOCATION_DESC, year_month, STATISTICAL_MURDER_FLAG) %>% summarize(CASES = n())
+boro_monthly_data <- boro_monthly_data %>% rename(OCCUR_DATE = year_month)
+
+boro_public_plot <- boro_monthly_data %>% filter(LOCATION_DESC == "PUBLIC") %>% ggplot(aes(x = OCCUR_DATE, y = CASES, color = BORO)) + geom_line() + labs(title = "Monthly Shootings Over Time by Borough (Public Locations Only)", x = "Date", y = "Number of Cases") + theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+print(boro_public_plot) 
+
+# 2. Add murder flag to be true filter 
+boro_murder_plot <- boro_monthly_data %>% filter(LOCATION_DESC == "PUBLIC", STATISTICAL_MURDER_FLAG == "true") %>% ggplot(aes(x = OCCUR_DATE, y = CASES, color = BORO)) + geom_line() + labs(title = "Monthly Murder Shootings Over Time by Borough (Public Locations Only)", x = "Date", y = "Number of Cases") + theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+print(boro_murder_plot) 
+
+# 3. Reduce to yearly data 
+yearly_data <- boro_monthly_data %>% mutate(YEAR = year(OCCUR_DATE))
+boro_yearly_data <- yearly_data %>% group_by(YEAR, BORO, LOCATION_DESC, STATISTICAL_MURDER_FLAG) %>% summarise(CASES = sum(CASES))
+
+#Plot Yearly Data
+boro_yearly_public_plot <- boro_yearly_data %>% filter(LOCATION_DESC == "PUBLIC") %>% ggplot(aes(x = YEAR, y = CASES, color = BORO)) + geom_line() + labs(title = "Yearly Shootings Over Time by Borough (Public Locations Only)", x = "Date", y = "Number of Cases") + theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+print(boro_yearly_public_plot) 
+
+# Add murder flag 
+boro_yearly_murder_plot <- boro_yearly_data %>% filter(LOCATION_DESC == "PUBLIC", STATISTICAL_MURDER_FLAG == "true") %>% ggplot(aes(x = YEAR, y = CASES, color = BORO)) + geom_line() + labs(title = "Yearly Murder Shootings Over Time by Borough (Public Locations Only)", x = "Date", y = "Number of Cases") + theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+print(boro_yearly_murder_plot) 
+
+#Examine Safest and Least Safe Months
+filtered_data <- boro_monthly_data %>% filter(LOCATION_DESC == "PUBLIC") %>% group_by(OCCUR_DATE, BORO) %>% summarise(TOTAL_CASES = sum(CASES))
+lowest_cases_per_boro <- filtered_data %>% group_by(BORO) %>% slice_min(TOTAL_CASES, n = 1) %>% ungroup() 
+highest_cases_per_boro <- filtered_data %>% group_by(BORO) %>% slice_max(TOTAL_CASES, n = 1) %>% ungroup() 
+
+year_filtered_data <- boro_yearly_data %>% filter(LOCATION_DESC == "PUBLIC") %>% group_by(YEAR, BORO) %>% summarise(TOTAL_CASES = sum(CASES))
+lowest_year_per_boro <- year_filtered_data %>% group_by(BORO) %>% slice_min(TOTAL_CASES, n = 1) %>% ungroup() 
+highest_year_per_boro <- year_filtered_data %>% group_by(BORO) %>% slice_max(TOTAL_CASES, n = 1) %>% ungroup() 
+```
+
+## Examining High and Low Records
+The tables below show the highest and lowest shooting recorded for each borough. 
+
+```{r tables}
+print(lowest_year_per_boro)
+print(highest_year_per_boro)
+```
+
+## Predicting Murders as a Function of Total Shootings
+Here I use a linear model to examine the number of murders compared to the total shootings. The plots below use the same model, but plot against two different metrics, 1. The Overall Shootings and 2. The Non Murderous Shootings. 
+
+```{r model,  warning = FALSE, message = FALSE}
+
+#Add Linear Model to either public or private shootings
+boro_murders_shootings <- boro_monthly_data %>% filter(LOCATION_DESC == "PUBLIC") %>% group_by(BORO, OCCUR_DATE) %>% summarise( MURDERS = sum(CASES[STATISTICAL_MURDER_FLAG == "true"]), SHOOTINGS = sum(CASES[STATISTICAL_MURDER_FLAG == "false"]), TOTAL = sum(MURDERS,SHOOTINGS))
+bronx_murders_shootings <- boro_murders_shootings %>% filter(BORO == 'BRONX')
+mod = lm(MURDERS ~ TOTAL, data = bronx_murders_shootings)
+bronx_pred <- bronx_murders_shootings %>% mutate(pred = predict(mod))
+
+
+bronx_pred %>% ggplot() + geom_line(aes(x = TOTAL, y = MURDERS), color = "blue") + geom_line(aes(x = TOTAL, y = pred), color = "red") + labs(title = "Proportion of Actual and Predicted Murders vs Total Shootings", x = "Total Shootings", y = "Number of Murders") + theme_minimal()
+
+bronx_pred %>% ggplot() + geom_line(aes(x = SHOOTINGS, y = MURDERS), color = "blue") + geom_line(aes(x = SHOOTINGS, y = pred), color = "red") + labs(title = "Proportion of Actual and Predicted Murders vs Non Murderous Shootings", x = "Non Murderous Shootings", y = "Number of Murders") + theme_minimal()
+
+
+```
