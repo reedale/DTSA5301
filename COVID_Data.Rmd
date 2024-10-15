@@ -170,3 +170,7 @@ US_tot_w_pred %>% ggplot() + geom_point(aes(x = cases_per_thou, y = deaths_per_t
 ## Linear Model 
 
 As we can see in the model prediction above, the deaths per thousand and the cases per thousand don't show a strong linear relationship overall with respect to US data, but given the small range in deaths per thousand, there is a decent accuracy overall. The fact that this relationship isn't perfectly linear makes sense, because one would assume the number of deaths would decrease over time, as prevention methods and vaccines were more widely accessible and understood. While this graph isn't time series, it does include data from the entire time span (2020-2023), so one could draw the conclusion that because the deaths per case average went down over time, there may not be a noticeable trend of death/case ratio when looking over the entire duration of the pandemic. 
+
+## Conclusion
+
+In conclusion, I was able to analyze the COVID-19 dataset to understand the trends in cases, deaths, and the ratio of the two on a global scale, as well as a comparison between the US as a whole, and Colorado as an individual state. 
