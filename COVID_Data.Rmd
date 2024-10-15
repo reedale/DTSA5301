@@ -1,0 +1,172 @@
+---
+title: "COVID19_Data"
+output: pdf_document
+date: "2024-10-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## COVID-19 Data Analysis Project 
+
+This data analysis examines COVID-19 case and death data for US, and globally from January of 2020 to March of 2023. The original raw data sets include information about the US county where the case was recorded, population of the county, and the date of the case. This project aims to answer the question, what were the US COVID cases that resulted in death compared to the overall case, and how does Colorado compare to the other states overall? 
+
+## Possible Bias 
+
+In any data science project, it is important to note the potential sources of bias and ensure they are identified to others consuming the information, as well as any appropriate mitigation steps are taken in analysis, if possible. Some possible sources of bias in this COVID-19 data set are; 
+
+1. Under-Reporting: At the height of the pandemic, many communities did not have the resources to support adequate testing. There were also periods where testing was either inaccessible or not free, which may have prevented some people from testing. This could cause the number of cases to be lower than reality. 
+
+2. Asymptomatic Cases: For some individuals, COVID-19 symptoms were lessened or not noticeable at all, so those individuals may have not gotten tested but still carried or had the potential to spread the virus. This could cause the number of cases to be lower than reality. 
+
+3. Healthcare Funding: During the pandemic, some hospital's resourcing and federal aid was dependent on the number of COVID-19 cases being treated at the hospital. This could cause an inflation in the number of reported COVID-19 deaths or cases in order for hospitals to get essential resources to support patients. 
+
+
+```{r covid,  warning = FALSE, message = FALSE, results = 'hide'}
+#Importing Data
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(mgcv)
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv")
+
+urls <- str_c(url_in,file_names)
+
+global_cases <- read.csv(urls[2])
+global_deaths <- read.csv(urls[4])
+US_cases <- read.csv(urls[1])
+US_deaths <- read.csv(urls[3])
+```
+
+```{r case_data, warning = FALSE, message = FALSE, results='hide'}
+#Looking at Global Cases 
+global_cases <- global_cases[, !(names(global_cases) %in% c("Admin2", "Lat", "Long_","UID", "iso2", "iso3","code3", "FIPS"))] 
+global_cases <- global_cases %>% rename(Country_Region = Country.Region, Province_State = Province.State)
+global_deaths <- global_deaths %>% rename(Country_Region = Country.Region, Province_State = Province.State)
+
+global_deaths <- global_deaths %>% pivot_longer(cols = -c('Province_State','Country_Region', 'Lat', 'Long'), names_to = "date", values_to = "deaths") %>% select(-c('Lat','Long'))
+global_cases <- global_cases %>% pivot_longer(cols = -c('Province_State','Country_Region'), names_to = "date", values_to = "cases")
+
+global_cases <- global_cases %>% mutate(date = gsub("^X", "", date)) %>% mutate(date = gsub("^(\\d)\\.", "0\\1.", date))
+global_deaths <- global_deaths %>% mutate(date = gsub("^X", "", date)) %>% mutate(date = gsub("^(\\d)\\.", "0\\1.", date))
+global <- global_cases %>% full_join(global_deaths) %>% mutate(date = mdy(date))
+global <- global %>% filter(cases > 0)
+
+#Examining US Cases 
+US_cases <- US_cases[, !(names(US_cases) %in% c("UID", "Lat", "Long_","UID", "iso2", "iso3","code3", "FIPS"))] 
+US_cases <- US_cases %>% pivot_longer(cols = -c('Province_State','Country_Region','Combined_Key','Admin2'), names_to = "date", values_to = "cases") %>% mutate(date = gsub("^X", "", date)) %>% mutate(date = gsub("^(\\d)\\.", "0\\1.", date))
+US_cases <- US_cases %>% mutate(date = mdy(date))
+
+US_deaths <- US_deaths[, !(names(US_deaths) %in% c("UID", "Lat", "Long_","UID", "iso2", "iso3","code3", "FIPS"))] 
+US_deaths <- US_deaths %>% pivot_longer(cols = -c('Province_State','Country_Region','Combined_Key','Admin2','Population'), names_to = "date", values_to = "deaths") %>% mutate(date = gsub("^X", "", date)) %>% mutate(date = gsub("^(\\d)\\.", "0\\1.", date))
+US_deaths <- US_deaths %>% mutate(date = mdy(date))
+
+US <- US_cases %>% full_join(US_deaths)
+US <- US %>% filter(cases > 0)
+```
+
+
+```{r Plotting, warning = FALSE, message = FALSE}
+#Plotting US Data
+US_by_state <- US %>%
+     group_by (Province_State, Country_Region, date) %>%
+     summarize(cases = sum(cases), deaths = sum(deaths) ,
+               Population = sum(Population)) %>%
+     mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+     select(Province_State, Country_Region, date,
+            cases, deaths, deaths_per_mill, Population) %>%
+     ungroup()
+
+US_totals <- US_by_state %>%
+  group_by (Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths) ,
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_totals %>%
+  filter(cases > 0) %>%
+  ggplot (aes(x = date, y = cases)) + 
+  geom_line (aes (color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes (y = deaths, color = "deaths")) +
+  geom_point (aes(y = deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID-19 Cases and Deaths in US", y= NULL)
+```
+
+
+
+```{r Colorado, warning = FALSE, message = FALSE}
+#Plotting Colorado Data 
+US_by_state %>%
+     filter(Province_State == "Colorado") %>%
+     filter(cases > 0) %>%
+     ggplot (aes(x = date, y = cases)) +
+     geom_line (aes (color = "cases")) + 
+     geom_point(aes(color = "cases")) + 
+     geom_line(aes (y = deaths, color = "deaths")) + 
+     geom_point (aes(y = deaths, color = "deaths")) + 
+     scale_y_log10() +
+     theme(legend.position="bottom",
+             axis.text.x = element_text(angle = 90)) + 
+     labs(title = "COVID-19 Cases and Deaths in Colorado", y= NULL)
+```
+
+## Cases and Deaths Over Time
+The trends in the national cases and deaths over the collection period are reflected in the Colorado trends as well. This makes sense, because largely when there were spikes in cases, those trends would quickly be reflected nationally. 
+
+```{r Ratios, warning = FALSE, message = FALSE}
+#Examining Peak Ratios for Death to Case variables 
+ US_state_totals <- US_by_state %>%
+ group_by (Province_State) %>%
+ summarize(deaths = max(deaths), cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000* cases / population,
+            deaths_per_thou = 1000* deaths/ population) %>%
+ filter (cases > 0, population > 0)     
+ 
+ #Plotting the Peak Death to Case Ratio Per State 
+ US_state_totals <- US_state_totals %>% mutate(death_case_ratio = deaths_per_thou / cases_per_thou)
+ 
+ ggplot(US_state_totals, aes(x = Province_State, y = death_case_ratio)) + geom_col() +
+    labs(title = "Death-to-Case Ratio per State", x = "State", y = "Peak Death-to-Case Ratio") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+#Examining Colorado Data 
+colorado_data <- US_cases %>% filter(Province_State == "Colorado")
+colorado_data_clean <- colorado_data %>% group_by(date) %>% summarize(cases = sum(cases)) 
+colorado_data_clean$date <- as.Date(colorado_data_clean$date)
+US_state_totals %>%  slice_min(deaths_per_thou, n = 15)
+```
+
+## Peak Colorado COVID-19 Cases Compared to US Overall 
+
+As we can see in the peak death-to-case ratio plot, Colorado ranked amongst the lower states in terms of death-to-case ratio over the course of the pandemic. Colorado had the 14th lowest peak death-to-case ratio out of the US states and territories. Also of note, only one state (Washington) had a larger population but lower death-to-case ratio. 
+
+```{r Modeling, warning = FALSE, message = FALSE}
+#Modeling US Data 
+mod = lm(deaths_per_thou ~ cases_per_thou, data = US_state_totals)
+
+US_state_totals %>%  slice_max(cases_per_thou, n = 5)
+
+US_state_totals %>%  slice_max(deaths_per_thou, n = 5)
+
+US_state_totals %>% mutate(pred = predict(mod))
+
+US_tot_w_pred <- US_state_totals %>% mutate(pred = predict(mod))
+
+US_tot_w_pred %>% ggplot() + geom_point(aes(x = cases_per_thou, y = deaths_per_thou), color = "blue") + geom_point(aes(x = cases_per_thou, y = pred), color = "red")
+```
+
+## Linear Model 
+
+As we can see in the model prediction above, the deaths per thousand and the cases per thousand don't show a strong linear relationship overall with respect to US data, but given the small range in deaths per thousand, there is a decent accuracy overall. The fact that this relationship isn't perfectly linear makes sense, because one would assume the number of deaths would decrease over time, as prevention methods and vaccines were more widely accessible and understood. While this graph isn't time series, it does include data from the entire time span (2020-2023), so one could draw the conclusion that because the deaths per case average went down over time, there may not be a noticeable trend of death/case ratio when looking over the entire duration of the pandemic. 
